@@ -40,7 +40,12 @@ class CryptoAnalyzer:
         if coingecko_data:
             return coingecko_data
             
-        # Method 3: Generate mock data for testing (remove in production)
+        # Method 3: Try CoinCap API (alternative free API)
+        coincap_data = self._try_coincap_api(symbol)
+        if coincap_data:
+            return coincap_data
+            
+        # Method 4: Generate mock data for testing (remove in production)
         print(f"All APIs failed for {symbol}, using mock data for testing")
         return self._generate_mock_data(symbol)
     
@@ -87,8 +92,18 @@ class CryptoAnalyzer:
     def _try_coingecko_api(self, symbol: str) -> Optional[List]:
         """Try CoinGecko API as fallback"""
         try:
+            # Map symbols to CoinGecko IDs
+            symbol_mapping = {
+                'btc': 'bitcoin',
+                'eth': 'ethereum', 
+                'cro': 'crypto-com-chain'
+            }
+            
+            coingecko_id = symbol_mapping.get(symbol, symbol)
+            print(f"Trying CoinGecko with ID: {coingecko_id}")
+            
             # CoinGecko free API - get last 1 day of data
-            url = f"https://api.coingecko.com/api/v3/coins/{symbol}/ohlc"
+            url = f"https://api.coingecko.com/api/v3/coins/{coingecko_id}/ohlc"
             params = {'vs_currency': 'usd', 'days': '1'}
             
             headers = {
@@ -119,6 +134,54 @@ class CryptoAnalyzer:
                 print(f"CoinGecko API returned {response.status_code}")
         except Exception as e:
             print(f"CoinGecko API failed: {e}")
+        
+        return None
+    
+    def _try_coincap_api(self, symbol: str) -> Optional[List]:
+        """Try CoinCap API as another fallback"""
+        try:
+            # Map symbols to CoinCap IDs
+            symbol_mapping = {
+                'BTCUSDT': 'bitcoin',
+                'ETHUSDT': 'ethereum',
+                'CROUSDT': 'crypto-com-chain'
+            }
+            
+            coincap_id = symbol_mapping.get(symbol, symbol.replace('USDT', '').lower())
+            print(f"Trying CoinCap with ID: {coincap_id}")
+            
+            # CoinCap API - get asset data
+            url = f"https://api.coincap.io/v2/assets/{coincap_id}/history"
+            params = {'interval': 'm5'}  # 5-minute intervals
+            
+            headers = {
+                'User-Agent': 'CryptoAnalysisBot/1.0',
+                'Accept': 'application/json'
+            }
+            
+            response = requests.get(url, params=params, headers=headers, timeout=15)
+            if response.status_code == 200:
+                data = response.json()['data']
+                # Convert CoinCap format to Binance-like format
+                converted_data = []
+                for item in data[-200:]:  # Get last 200 points
+                    price = float(item['priceUsd'])
+                    # Mock OHLC from single price point
+                    converted_data.append([
+                        item['time'],  # timestamp
+                        str(price * 0.999),  # open (slightly lower)
+                        str(price * 1.001),  # high (slightly higher)
+                        str(price * 0.998),  # low (slightly lower)
+                        str(price),  # close (actual price)
+                        "1000000",  # mock volume
+                        item['time'] + 300000,  # close_time
+                        "0", "0", "0", "0", "0"  # other binance fields
+                    ])
+                return converted_data
+            else:
+                print(f"CoinCap API returned {response.status_code}")
+        except Exception as e:
+            print(f"CoinCap API failed: {e}")
         
         return None
     

@@ -1,11 +1,12 @@
 name: Crypto Technical Analysis
 
 on:
-  schedule:
-    # Run every 5 minutes
-    - cron: '*/5 * * * *'
+  # Disabled automatic schedule - enable when ready for production
+  # schedule:
+  #   # Run every 5 minutes
+  #   - cron: '*/5 * * * *'
   
-  # Allow manual trigger
+  # Manual trigger only
   workflow_dispatch:
 
 jobs:
