@@ -24,7 +24,7 @@ class CryptoAnalyzer:
             raise ValueError("Missing required environment variables")
     
     def get_binance_data(self, symbol: str, interval: str = '5m', limit: int = 200) -> Optional[List]:
-        """Fetch OHLCV data from Binance API"""
+        """Fetch OHLCV data from Binance API with proper headers"""
         url = f"https://api.binance.com/api/v3/klines"
         params = {
             'symbol': symbol,
@@ -32,13 +32,31 @@ class CryptoAnalyzer:
             'limit': limit
         }
         
+        # Add headers to avoid 451 error
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        }
+        
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, headers=headers, timeout=15)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:
             print(f"Error fetching {symbol} data: {e}")
-            return None
+            # Try alternative endpoint if main fails
+            try:
+                alt_url = f"https://data-api.binance.vision/api/v3/klines"
+                response = requests.get(alt_url, params=params, headers=headers, timeout=15)
+                response.raise_for_status()
+                return response.json()
+            except requests.RequestException as e2:
+                print(f"Alternative endpoint also failed for {symbol}: {e2}")
+                return None
     
     def analyze_with_gemini(self, symbol: str, ohlcv_data: List) -> Optional[Dict]:
         """Send data to Gemini for technical analysis"""
