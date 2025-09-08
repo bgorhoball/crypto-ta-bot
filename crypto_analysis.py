@@ -26,64 +26,19 @@ class CryptoAnalyzer:
     def get_crypto_data(self, symbol: str, interval: str = '5m', limit: int = 200) -> Optional[List]:
         """Fetch OHLCV data using multiple fallback APIs"""
         
-        # Method 1: Try Binance with enhanced headers
-        binance_data = self._try_binance_api(symbol, interval, limit)
-        if binance_data:
-            return binance_data
-            
-        # Method 2: Try CoinGecko API (free, no restrictions)
+        # Method 1: Try CoinGecko API (free, no restrictions)
         coingecko_data = self._try_coingecko_api(symbol)
         if coingecko_data:
             return coingecko_data
             
-        # Method 3: Try CoinCap API (alternative free API)
+        # Method 2: Try CoinCap API (alternative free API)
         coincap_data = self._try_coincap_api(symbol)
         if coincap_data:
             return coincap_data
             
-        # Method 4: Generate mock data for testing (remove in production)
+        # Method 3: Generate mock data for testing (remove in production)
         print(f"All APIs failed for {symbol}, using mock data for testing")
         return self._generate_mock_data(symbol)
-    
-    def _try_binance_api(self, symbol: str, interval: str, limit: int) -> Optional[List]:
-        """Try Binance API with multiple endpoints and headers"""
-        endpoints = [
-            "https://api.binance.com/api/v3/klines",
-            "https://api1.binance.com/api/v3/klines", 
-            "https://api2.binance.com/api/v3/klines",
-            "https://api3.binance.com/api/v3/klines"
-        ]
-        
-        params = {'symbol': symbol, 'interval': interval, 'limit': limit}
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache',
-            'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            'Sec-Ch-Ua-Mobile': '?0',
-            'Sec-Ch-Ua-Platform': '"Windows"',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-origin'
-        }
-        
-        for endpoint in endpoints:
-            try:
-                response = requests.get(endpoint, params=params, headers=headers, timeout=20)
-                if response.status_code == 200:
-                    return response.json()
-                else:
-                    print(f"Binance endpoint {endpoint} returned {response.status_code}")
-            except Exception as e:
-                print(f"Binance endpoint {endpoint} failed: {e}")
-                continue
-        
-        return None
     
     def _try_coingecko_api(self, symbol: str) -> Optional[List]:
         """Try CoinGecko API as fallback"""
@@ -315,6 +270,55 @@ class CryptoAnalyzer:
             "analysis": f"Mock analysis: {symbol} showing {trend_short} short-term and {trend_long} long-term trends with {rsi_signal} RSI conditions."
         }
     
+    def _extract_json_from_response(self, text_response: str) -> Optional[Dict]:
+        """Extract JSON from Gemini response, handling markdown and extra text"""
+        try:
+            # Method 1: Try to find JSON block in markdown
+            if '```json' in text_response:
+                # Extract content between ```json and ``` (or ```\n)
+                start_marker = '```json'
+                end_markers = ['```', '```\n']
+                
+                start_idx = text_response.find(start_marker) + len(start_marker)
+                json_part = text_response[start_idx:]
+                
+                # Find the end marker
+                end_idx = len(json_part)
+                for end_marker in end_markers:
+                    marker_idx = json_part.find(end_marker)
+                    if marker_idx != -1:
+                        end_idx = min(end_idx, marker_idx)
+                
+                json_text = json_part[:end_idx].strip()
+                return json.loads(json_text)
+            
+            # Method 2: Try to find JSON by looking for { } braces
+            start_brace = text_response.find('{')
+            if start_brace != -1:
+                # Find the last closing brace
+                brace_count = 0
+                end_brace = start_brace
+                
+                for i, char in enumerate(text_response[start_brace:], start_brace):
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            end_brace = i
+                            break
+                
+                if brace_count == 0:  # Found matching closing brace
+                    json_text = text_response[start_brace:end_brace + 1]
+                    return json.loads(json_text)
+            
+            # Method 3: Try parsing the whole response as JSON (fallback)
+            return json.loads(text_response.strip())
+            
+        except json.JSONDecodeError as e:
+            print(f"JSON extraction failed: {e}")
+            return None
+    
     def analyze_with_gemini(self, symbol: str, ohlcv_data: List) -> Optional[Dict]:
         """Send data to Gemini for technical analysis"""
         if not ohlcv_data:
@@ -388,9 +392,29 @@ Analyze current market conditions and return ONLY this JSON:
             }
         }
         
+        # Try up to 3 times with exponential backoff for 503 errors
+        for attempt in range(3):
+            try:
+                response = requests.post(url, headers=headers, json=data, timeout=30)
+                if response.status_code == 503:
+                    wait_time = 2 ** attempt  # 1, 2, 4 seconds
+                    print(f"Gemini 503 error for {symbol}, retrying in {wait_time}s (attempt {attempt + 1}/3)")
+                    if attempt < 2:  # Don't sleep on last attempt
+                        time.sleep(wait_time)
+                        continue
+                
+                response.raise_for_status()
+                break  # Success, exit retry loop
+                
+            except requests.RequestException as e:
+                if attempt == 2:  # Last attempt
+                    print(f"Gemini API failed after 3 attempts for {symbol}: {e}")
+                    return self._generate_mock_analysis(symbol, ohlcv_data)
+                print(f"Gemini attempt {attempt + 1} failed for {symbol}: {e}")
+                time.sleep(2 ** attempt)
+                continue
+        
         try:
-            response = requests.post(url, headers=headers, json=data, timeout=30)
-            response.raise_for_status()
             
             result = response.json()
             print(f"Gemini raw response for {symbol}: {result}")
@@ -412,16 +436,13 @@ Analyze current market conditions and return ONLY this JSON:
             text_response = candidate['content']['parts'][0]['text']
             print(f"Gemini text response for {symbol}: {text_response[:200]}...")
             
-            # Clean the response - remove any markdown formatting
-            cleaned_response = text_response.strip()
-            if cleaned_response.startswith('```json'):
-                cleaned_response = cleaned_response[7:]  # Remove ```json
-            if cleaned_response.endswith('```'):
-                cleaned_response = cleaned_response[:-3]  # Remove ```
-            cleaned_response = cleaned_response.strip()
-            
-            # Parse JSON from response
-            return json.loads(cleaned_response)
+            # Extract JSON from response (handle markdown and extra text)
+            json_data = self._extract_json_from_response(text_response)
+            if json_data:
+                return json_data
+            else:
+                print(f"Could not extract valid JSON from Gemini response for {symbol}")
+                return self._generate_mock_analysis(symbol, ohlcv_data)
             
         except (requests.RequestException, json.JSONDecodeError, KeyError) as e:
             print(f"Error analyzing {symbol} with Gemini: {e}")
