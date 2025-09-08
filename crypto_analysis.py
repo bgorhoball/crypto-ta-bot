@@ -26,17 +26,13 @@ class CryptoAnalyzer:
     def get_crypto_data(self, symbol: str, interval: str = '5m', limit: int = 200) -> Optional[List]:
         """Fetch OHLCV data using multiple fallback APIs"""
         
-        # Convert symbol format for different APIs
-        binance_symbol = symbol
-        coingecko_symbol = symbol.replace('USDT', '').lower()
-        
         # Method 1: Try Binance with enhanced headers
-        binance_data = self._try_binance_api(binance_symbol, interval, limit)
+        binance_data = self._try_binance_api(symbol, interval, limit)
         if binance_data:
             return binance_data
             
         # Method 2: Try CoinGecko API (free, no restrictions)
-        coingecko_data = self._try_coingecko_api(coingecko_symbol)
+        coingecko_data = self._try_coingecko_api(symbol)
         if coingecko_data:
             return coingecko_data
             
@@ -92,15 +88,19 @@ class CryptoAnalyzer:
     def _try_coingecko_api(self, symbol: str) -> Optional[List]:
         """Try CoinGecko API as fallback"""
         try:
-            # Map symbols to CoinGecko IDs
+            # Map Binance symbols to CoinGecko IDs
             symbol_mapping = {
-                'btc': 'bitcoin',
-                'eth': 'ethereum', 
-                'cro': 'crypto-com-chain'
+                'BTCUSDT': 'bitcoin',
+                'ETHUSDT': 'ethereum', 
+                'CROUSDT': 'crypto-com-chain'
             }
             
-            coingecko_id = symbol_mapping.get(symbol, symbol)
-            print(f"Trying CoinGecko with ID: {coingecko_id}")
+            coingecko_id = symbol_mapping.get(symbol)
+            if not coingecko_id:
+                print(f"No CoinGecko mapping for {symbol}")
+                return None
+                
+            print(f"Trying CoinGecko: {symbol} → {coingecko_id}")
             
             # CoinGecko free API - get last 1 day of data
             url = f"https://api.coingecko.com/api/v3/coins/{coingecko_id}/ohlc"
@@ -114,6 +114,8 @@ class CryptoAnalyzer:
             response = requests.get(url, params=params, headers=headers, timeout=15)
             if response.status_code == 200:
                 data = response.json()
+                print(f"CoinGecko returned {len(data)} data points for {coingecko_id}")
+                
                 # Convert CoinGecko format to Binance-like format
                 converted_data = []
                 for item in data:
@@ -126,14 +128,17 @@ class CryptoAnalyzer:
                         str(item[3]),  # low
                         str(item[4]),  # close
                         "1000000",  # mock volume
-                        item[0] + 300000,  # close_time
+                        item[0] + 300000,  # close_time (add 5 minutes)
                         "0", "0", "0", "0", "0"  # other binance fields
                     ])
+                print(f"Converted {len(converted_data)} CoinGecko data points to Binance format")
                 return converted_data
             else:
-                print(f"CoinGecko API returned {response.status_code}")
+                print(f"CoinGecko API returned {response.status_code} for {coingecko_id}")
+                if response.status_code == 404:
+                    print(f"CoinGecko 404: '{coingecko_id}' not found - check symbol mapping")
         except Exception as e:
-            print(f"CoinGecko API failed: {e}")
+            print(f"CoinGecko API failed for {symbol}: {e}")
         
         return None
     
